@@ -13,6 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 
 import { Room, RoomCardProps } from '../types/room';
+import { useAppTheme } from '../presentation/theme/useAppTheme';
 
 /**
  * Component badge hiển thị trạng thái đặt phòng.
@@ -55,10 +56,11 @@ const StatusBadge: React.FC<{ status: Room['status'] }> = ({ status }) => {
   );
 };
 
-const RoomCard: React.FC<RoomCardProps> = ({ room, onPress }) => {
+const RoomCard: React.FC<RoomCardProps> = React.memo(({ room, onPress }) => {
+  const { colors } = useAppTheme();
   return (
     <TouchableOpacity
-      style={styles.card}
+      style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
       activeOpacity={0.8}
       onPress={() => onPress?.(room)}
     >
@@ -76,14 +78,14 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onPress }) => {
       {/* Phần nội dung text */}
       <View style={styles.content}>
         {/* 2. Tên phòng */}
-        <Text style={styles.name} numberOfLines={1}>
+        <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>
           {room.name}
         </Text>
 
         {/* 3. Địa điểm / Tòa nhà */}
         <View style={styles.infoRow}>
           <Ionicons name="location-outline" size={12} color="#7B8494" />
-          <Text style={styles.infoText} numberOfLines={1}>
+          <Text style={[styles.infoText, { color: colors.mutedText }]} numberOfLines={1}>
             {room.building}
           </Text>
         </View>
@@ -91,7 +93,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onPress }) => {
         {/* 4. Sức chứa */}
         <View style={styles.infoRow}>
           <Ionicons name="people-outline" size={12} color="#7B8494" />
-          <Text style={styles.infoText} numberOfLines={1}>
+          <Text style={[styles.infoText, { color: colors.mutedText }]} numberOfLines={1}>
             {room.capacity} seats
           </Text>
         </View>
@@ -101,7 +103,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, onPress }) => {
       </View>
     </TouchableOpacity>
   );
-};
+});
 
 const styles = StyleSheet.create({
   card: {
@@ -117,6 +119,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#EEF0F3',
     overflow: 'hidden',
+    marginHorizontal: 5,
   },
   image: {
     width: '100%',

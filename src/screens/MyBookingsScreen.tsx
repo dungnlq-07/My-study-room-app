@@ -1,8 +1,7 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   Modal,
   Pressable,
   StyleSheet,
@@ -14,9 +13,12 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FlashList } from '@shopify/flash-list';
 
 import { Booking, useAppState } from '../context/AppStateContext';
 import { Room } from '../types/room';
+import BookingListItem from '../components/BookingListItem';
+import { useAppTheme } from '../presentation/theme/useAppTheme';
 
 const formatDate = (date: string) =>
   new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
@@ -45,6 +47,7 @@ const MyBookingsScreen: React.FC = () => {
     error,
     refreshData,
   } = useAppState();
+  const { colors } = useAppTheme();
   const [selectedBookingId, setSelectedBookingId] = React.useState<string | null>(null);
   const [extensionMinutes, setExtensionMinutes] = React.useState('30');
   const [extending, setExtending] = React.useState(false);
@@ -52,6 +55,10 @@ const MyBookingsScreen: React.FC = () => {
     `${a.date} ${a.slot}`.localeCompare(`${b.date} ${b.slot}`),
   );
   const selectedBooking = bookings.find((item) => item.id === selectedBookingId);
+  const handleSelectBooking = useCallback(
+    (bookingId: string) => setSelectedBookingId(bookingId),
+    [],
+  );
 
   const statusLabel = (status: Booking['status']) => {
     switch (status) {
@@ -88,43 +95,62 @@ const MyBookingsScreen: React.FC = () => {
     }
   };
 
-  const confirmCancel = (booking: Booking) => {
-    const room = rooms.find((item) => item.id === booking.roomId);
-    Alert.alert(
-      'Cancel booking?',
-      `Your booking for ${room?.name ?? 'this room'} will be removed.`,
-      [
-        { text: 'Keep booking', style: 'cancel' },
-        {
-          text: 'Cancel booking',
-          style: 'destructive',
-          onPress: () => {
-            void cancelBooking(booking.id).catch((cancelError: unknown) => {
-              Alert.alert(
-                'Could not cancel booking',
-                cancelError instanceof Error
-                  ? cancelError.message
-                  : 'Please try again.',
-              );
-            });
+  const confirmCancel = useCallback(
+    (booking: Booking) => {
+      const room = rooms.find((item) => item.id === booking.roomId);
+      Alert.alert(
+        'Cancel booking?',
+        `Your booking for ${room?.name ?? 'this room'} will be removed.`,
+        [
+          { text: 'Keep booking', style: 'cancel' },
+          {
+            text: 'Cancel booking',
+            style: 'destructive',
+            onPress: () => {
+              void cancelBooking(booking.id).catch((cancelError: unknown) => {
+                Alert.alert(
+                  'Could not cancel booking',
+                  cancelError instanceof Error
+                    ? cancelError.message
+                    : 'Please try again.',
+                );
+              });
+            },
           },
-        },
-      ],
-    );
-  };
+        ],
+      );
+    },
+    [rooms, cancelBooking],
+  );
+  const renderBooking = useCallback(
+    ({ item }: { item: Booking }) => {
+      const room: Room | undefined = rooms.find(
+        (entry) => entry.id === item.roomId,
+      );
+      return (
+        <BookingListItem
+          booking={item}
+          room={room}
+          onSelect={handleSelectBooking}
+          onCancel={confirmCancel}
+        />
+      );
+    },
+    [rooms, handleSelectBooking, confirmCancel],
+  );
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
       <View style={styles.header}>
-        <Text style={styles.title}>My Bookings</Text>
-        <Text style={styles.subtitle}>
+        <Text style={[styles.title, { color: colors.text }]}>My Bookings</Text>
+        <Text style={[styles.subtitle, { color: colors.mutedText }]}>
           {bookings.length} {bookings.length === 1 ? 'reservation' : 'reservations'}
         </Text>
       </View>
       {loading && (
         <View style={styles.statusRow}>
           <ActivityIndicator color="#2563EB" />
-          <Text style={styles.statusText}>Loading bookings from Firestore...</Text>
+          <Text style={styles.statusText}>Loading bookings...</Text>
         </View>
       )}
       {error && (
@@ -135,20 +161,22 @@ const MyBookingsScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
       )}
-      <FlatList
+      <FlashList
         data={sortedBookings}
+        estimatedItemSize={110}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={[
-          styles.listContent,
-          sortedBookings.length === 0 && styles.emptyList,
-        ]}
+        contentContainerStyle={{
+          paddingHorizontal: 16,
+          paddingBottom: 24,
+          ...(sortedBookings.length === 0 ? { flexGrow: 1 } : {}),
+        }}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <View style={styles.emptyIcon}>
               <Ionicons name="calendar-outline" size={30} color="#2563EB" />
             </View>
-            <Text style={styles.emptyTitle}>
+            <Text style={[styles.emptyTitle, { color: colors.text }]}>
               {loading
                 ? 'Loading bookings'
                 : error
@@ -156,71 +184,13 @@ const MyBookingsScreen: React.FC = () => {
                   : 'No bookings yet'}
             </Text>
             {!loading && !error && (
-              <Text style={styles.emptyText}>
+              <Text style={[styles.emptyText, { color: colors.mutedText }]}>
                 Browse rooms and reserve an available time slot to see it here.
               </Text>
             )}
           </View>
         }
-        renderItem={({ item }) => {
-          const room: Room | undefined = rooms.find((entry) => entry.id === item.roomId);
-          return (
-            <View style={styles.bookingCard}>
-              <TouchableOpacity
-                style={styles.bookingContent}
-                onPress={() => setSelectedBookingId(item.id)}
-                accessibilityRole="button"
-                accessibilityLabel={`View booking details for ${room?.name ?? item.roomName}`}
-              >
-                <View style={styles.bookingIcon}>
-                  <Ionicons name="business-outline" size={22} color="#2563EB" />
-                </View>
-                <View style={styles.bookingDetails}>
-                  <View style={styles.titleRow}>
-                    <Text style={styles.roomName}>{room?.name ?? item.roomName}</Text>
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        item.status === 'IN_USE' && styles.inUseBadge,
-                        (item.status === 'NO_SHOW' || item.status === 'COMPLETED') &&
-                          styles.inactiveBadge,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.bookingStatusText,
-                          item.status === 'IN_USE' && styles.inUseText,
-                          (item.status === 'NO_SHOW' || item.status === 'COMPLETED') &&
-                            styles.inactiveText,
-                        ]}
-                      >
-                        {statusLabel(item.status)}
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={styles.roomLocation}>{room?.building ?? item.building}</Text>
-                  <View style={styles.metaRow}>
-                    <Ionicons name="calendar-outline" size={14} color="#6B7280" />
-                    <Text style={styles.metaText}>{formatDate(item.date)}</Text>
-                  </View>
-                  <View style={styles.metaRow}>
-                    <Ionicons name="time-outline" size={14} color="#6B7280" />
-                    <Text style={styles.metaText}>{formatBookingTime(item)}</Text>
-                  </View>
-                </View>
-              </TouchableOpacity>
-              {item.status === 'CONFIRMED' && (
-                <TouchableOpacity
-                  style={styles.cancelButton}
-                  onPress={() => confirmCancel(item)}
-                  accessibilityLabel={`Cancel booking for ${room?.name ?? item.roomName}`}
-                >
-                  <Ionicons name="trash-outline" size={18} color="#DC2626" />
-                </TouchableOpacity>
-              )}
-            </View>
-          );
-        }}
+        renderItem={renderBooking}
       />
       <Modal
         visible={selectedBooking !== undefined}
@@ -234,14 +204,14 @@ const MyBookingsScreen: React.FC = () => {
             onPress={() => setSelectedBookingId(null)}
           />
           {selectedBooking && (
-            <View style={styles.detailSheet}>
+            <View style={[styles.detailSheet, { backgroundColor: colors.surface }]}>
               <View style={styles.sheetHandle} />
-              <Text style={styles.detailTitle}>
+              <Text style={[styles.detailTitle, { color: colors.text }]}>
                 {rooms.find((room) => room.id === selectedBooking.roomId)?.name ??
                   selectedBooking.roomName}
               </Text>
               <Text style={styles.detailSubtitle}>{statusLabel(selectedBooking.status)}</Text>
-              <Text style={styles.detailMeta}>
+              <Text style={[styles.detailMeta, { color: colors.mutedText }]}>
                 {formatDate(selectedBooking.date)} · {formatBookingTime(selectedBooking)}
               </Text>
               {selectedBooking.status === 'CONFIRMED' && (
@@ -252,15 +222,15 @@ const MyBookingsScreen: React.FC = () => {
                     backgroundColor="#FFFFFF"
                     color="#111827"
                   />
-                  <Text style={styles.qrHint}>
+                  <Text style={[styles.qrHint, { color: colors.mutedText }]}>
                     Đưa mã QR này cho máy quét để check-in. Mã chỉ sử dụng được một lần.
                   </Text>
                 </View>
               )}
               {selectedBooking.status === 'IN_USE' && (
                 <View style={styles.extensionPanel}>
-                  <Text style={styles.extensionTitle}>Gia hạn thời gian</Text>
-                  <Text style={styles.extensionHint}>
+                  <Text style={[styles.extensionTitle, { color: colors.text }]}>Gia hạn thời gian</Text>
+                  <Text style={[styles.extensionHint, { color: colors.mutedText }]}>
                     Yêu cầu gia hạn chỉ được duyệt khi khung giờ tiếp theo còn trống.
                   </Text>
                   <View style={styles.extensionRow}>

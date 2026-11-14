@@ -7,11 +7,11 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  Timestamp,
   where,
 } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 
-import { db } from '../config/firebase';
+import { auth, db } from '../config/firebase';
 import type { Booking, BookingStatus } from '../context/AppStateContext';
 import { Room } from '../types/room';
 
@@ -19,12 +19,6 @@ const BOOKINGS_COLLECTION = 'bookings';
 const ROOMS_COLLECTION = 'rooms';
 export const DEFAULT_BOOKING_SLOT = '09:00 - 11:00';
 const CHECK_IN_GRACE_MS = 15 * 60 * 1000;
-
-const isBookingStatus = (status: unknown): status is BookingStatus =>
-  status === 'CONFIRMED' ||
-  status === 'IN_USE' ||
-  status === 'COMPLETED' ||
-  status === 'NO_SHOW';
 
 export class BookingConflictError extends Error {
   constructor(message: string) {
@@ -157,11 +151,19 @@ const toBooking = (
   const endTime =
     typeof data.endTime === 'string' ? data.endTime : bookingTimeRange.endTime;
   const storedStatus = data.status;
-  const status: BookingStatus = isBookingStatus(storedStatus)
-    ? storedStatus
-    : storedStatus === 'expired' || isBookingExpired({ ...data, endTime }, now)
-      ? 'COMPLETED'
-      : 'CONFIRMED';
+  const isExpired = isBookingExpired({ ...data, endTime }, now);
+  const startTimeMs = Date.parse(startTime);
+  const status: BookingStatus =
+    storedStatus === 'NO_SHOW' || storedStatus === 'COMPLETED'
+      ? storedStatus
+      : isExpired
+        ? 'COMPLETED'
+        : storedStatus === 'IN_USE'
+          ? 'IN_USE'
+          : (storedStatus === 'CONFIRMED' || storedStatus === 'active') &&
+              now > startTimeMs + CHECK_IN_GRACE_MS
+            ? 'NO_SHOW'
+            : 'CONFIRMED';
   return {
     id,
     roomId: data.roomId,
@@ -270,6 +272,7 @@ export const addBooking = async (
     ) {
       throw new Error('Sức chứa của phòng trong Firestore không hợp lệ.');
     }
+    // The room revision makes cooperating client transactions retry and re-run this query.
     const bookingsSnapshot = await getDocs(roomBookingsQuery);
     const active = bookingsSnapshot.docs.filter(
       (bookingDoc) =>
@@ -314,8 +317,19 @@ export const addBooking = async (
       userId,
       startTime,
       endTime,
+      startAt: Timestamp.fromMillis(Date.parse(startTime)),
+      endAt: Timestamp.fromMillis(Date.parse(endTime)),
       status: 'CONFIRMED',
       createdAt: serverTimestamp(),
+      checkInStartsAt: Timestamp.fromMillis(
+        Date.parse(startTime) - CHECK_IN_GRACE_MS,
+      ),
+      checkInEndsAt: Timestamp.fromMillis(
+        Math.min(
+          Date.parse(endTime),
+          Date.parse(startTime) + CHECK_IN_GRACE_MS,
+        ),
+      ),
     });
     transaction.update(roomRef, { bookingRevision: increment(1) });
   });
@@ -326,49 +340,93 @@ export const addBooking = async (
   return createdBooking;
 };
 
-const functions = getFunctions(undefined, 'us-central1');
-const extendBookingCallable = httpsCallable<
-  { bookingId: string; minutes: number },
-  { endTime: string }
->(functions, 'extendBooking');
-
-export const checkInBooking = async (
+const ensureBookingTimestampFields = async (
   bookingId: string,
-  userId: string,
 ): Promise<void> => {
   const bookingRef = doc(db, BOOKINGS_COLLECTION, bookingId);
   await runTransaction(db, async (transaction) => {
     const bookingSnapshot = await transaction.get(bookingRef);
     if (!bookingSnapshot.exists()) {
-      throw new Error('Không tìm thấy lượt đặt này. Mã QR có thể không hợp lệ hoặc lượt đặt đã bị hủy.');
+      throw new Error('Booking không còn tồn tại.');
     }
 
-    const bookingData = bookingSnapshot.data();
-    if (bookingData.userId !== userId) {
-      throw new Error('Mã QR không thuộc tài khoản đang đăng nhập.');
-    }
-    if (bookingData.status === 'IN_USE' || bookingData.checkedInAt) {
-      throw new Error('Lượt đặt này đã được check-in trước đó.');
+    const booking = bookingSnapshot.data();
+    if (
+      booking.startAt instanceof Timestamp &&
+      booking.endAt instanceof Timestamp &&
+      booking.checkInStartsAt instanceof Timestamp &&
+      booking.checkInEndsAt instanceof Timestamp
+    ) {
+      return;
     }
     if (
-      bookingData.status === 'CANCELLED' ||
-      bookingData.status === 'CANCELED' ||
-      bookingData.status === 'cancelled' ||
-      bookingData.status === 'canceled'
+      booking.startAt !== undefined ||
+      booking.endAt !== undefined ||
+      booking.checkInStartsAt !== undefined ||
+      booking.checkInEndsAt !== undefined
     ) {
-      throw new Error('Lượt đặt này đã bị hủy, không thể check-in.');
-    }
-    if (bookingData.status === 'NO_SHOW' || bookingData.status === 'COMPLETED') {
-      throw new Error('Lượt đặt này đã bị hủy hoặc đã kết thúc, không thể check-in.');
-    }
-    if (bookingData.status !== 'CONFIRMED') {
-      throw new Error('Trạng thái lượt đặt không hợp lệ để check-in.');
+      throw new Error(`Booking "${bookingId}" has incomplete time metadata.`);
     }
 
+    const { startTime, endTime } = getBookingRange(booking);
+    transaction.update(bookingRef, {
+      startAt: Timestamp.fromMillis(startTime),
+      endAt: Timestamp.fromMillis(endTime),
+      checkInStartsAt: Timestamp.fromMillis(
+        startTime - CHECK_IN_GRACE_MS,
+      ),
+      checkInEndsAt: Timestamp.fromMillis(
+        Math.min(endTime, startTime + CHECK_IN_GRACE_MS),
+      ),
+    });
+  });
+};
+
+export const checkInBooking = async (bookingId: string): Promise<void> => {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Bạn cần đăng nhập để check-in.');
+  if (!bookingId.trim()) throw new Error('Mã booking không hợp lệ.');
+
+  const { claims } = await user.getIdTokenResult();
+  const mayScanBookings = claims.scanner === true || claims.admin === true;
+  await ensureBookingTimestampFields(bookingId);
+  const bookingRef = doc(db, BOOKINGS_COLLECTION, bookingId);
+  const now = Date.now();
+
+  await runTransaction(db, async (transaction) => {
+    const bookingSnapshot = await transaction.get(bookingRef);
+    if (!bookingSnapshot.exists()) {
+      throw new Error('Mã không hợp lệ hoặc đã hết hạn.');
+    }
+
+    const booking = bookingSnapshot.data();
+    if (booking.userId !== user.uid && !mayScanBookings) {
+      throw new Error('Bạn không có quyền check-in booking này.');
+    }
+    if (booking.status !== 'CONFIRMED' && booking.status !== 'active') {
+      throw new Error('Mã không hợp lệ hoặc đã hết hạn.');
+    }
+
+    const { startTime, endTime } = getBookingRange(booking);
+    const checkInDeadline = Math.min(endTime, startTime + CHECK_IN_GRACE_MS);
+    if (now < startTime - CHECK_IN_GRACE_MS || now > checkInDeadline) {
+      throw new Error('Mã không hợp lệ hoặc đã hết hạn.');
+    }
+    if (typeof booking.roomId !== 'string') {
+      throw new Error(`Booking "${bookingId}" has no roomId.`);
+    }
+
+    const roomRef = doc(db, ROOMS_COLLECTION, booking.roomId);
+    const roomSnapshot = await transaction.get(roomRef);
     transaction.update(bookingRef, {
       status: 'IN_USE',
       checkedInAt: serverTimestamp(),
+      qrInvalidatedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     });
+    if (roomSnapshot.exists()) {
+      transaction.update(roomRef, { bookingRevision: increment(1) });
+    }
   });
 };
 
@@ -376,7 +434,70 @@ export const extendBooking = async (
   bookingId: string,
   minutes: number,
 ): Promise<void> => {
-  await extendBookingCallable({ bookingId, minutes });
+  const user = auth.currentUser;
+  if (!user) throw new Error('Bạn cần đăng nhập để gia hạn.');
+  if (!bookingId.trim() || !Number.isSafeInteger(minutes) || minutes <= 0) {
+    throw new Error('Thời lượng gia hạn không hợp lệ.');
+  }
+
+  await ensureBookingTimestampFields(bookingId);
+  const bookingRef = doc(db, BOOKINGS_COLLECTION, bookingId);
+  await runTransaction(db, async (transaction) => {
+    const bookingSnapshot = await transaction.get(bookingRef);
+    if (!bookingSnapshot.exists()) {
+      throw new Error('Booking không còn tồn tại.');
+    }
+
+    const booking = bookingSnapshot.data();
+    if (booking.userId !== user.uid) {
+      throw new Error('Bạn chỉ có thể gia hạn booking của mình.');
+    }
+    if (booking.status !== 'IN_USE') {
+      throw new Error('Chỉ có thể gia hạn khi đang sử dụng.');
+    }
+    const { endTime } = getBookingRange(booking);
+    if (Date.now() > endTime) {
+      throw new Error('Thời gian sử dụng đã kết thúc.');
+    }
+    if (typeof booking.roomId !== 'string') {
+      throw new Error(`Booking "${bookingId}" has no roomId.`);
+    }
+
+    const extendedEnd = endTime + minutes * 60 * 1000;
+    if (!Number.isFinite(extendedEnd)) {
+      throw new Error('Thời lượng gia hạn không hợp lệ.');
+    }
+
+    // Re-run this query on transaction retries after a competing revision update.
+    const roomBookings = await getDocs(
+      query(
+        collection(db, BOOKINGS_COLLECTION),
+        where('roomId', '==', booking.roomId),
+      ),
+    );
+    const now = Date.now();
+    const overlaps = roomBookings.docs.some((otherDocument) => {
+      if (otherDocument.id === bookingId) return false;
+      const otherBooking = otherDocument.data();
+      if (!isBookingOccupyingSlot(otherBooking, now)) return false;
+      const range = getBookingRange(otherBooking);
+      return range.startTime < extendedEnd && range.endTime > endTime;
+    });
+    if (overlaps) {
+      throw new BookingConflictError('Khung giờ tiếp theo đã có người đặt');
+    }
+
+    const roomRef = doc(db, ROOMS_COLLECTION, booking.roomId);
+    const roomSnapshot = await transaction.get(roomRef);
+    transaction.update(bookingRef, {
+      endTime: new Date(extendedEnd).toISOString(),
+      endAt: Timestamp.fromMillis(extendedEnd),
+      updatedAt: serverTimestamp(),
+    });
+    if (roomSnapshot.exists()) {
+      transaction.update(roomRef, { bookingRevision: increment(1) });
+    }
+  });
 };
 
 export const cancelBooking = async (

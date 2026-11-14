@@ -5,6 +5,7 @@
 import React from 'react';
 import { View, TextInput, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useAppTheme } from '../presentation/theme/useAppTheme';
 
 interface SearchBarProps {
   /** Giá trị hiện tại của ô tìm kiếm */
@@ -20,14 +21,15 @@ const SearchBar: React.FC<SearchBarProps> = ({
   onChangeText,
   placeholder = 'Search rooms...',
 }) => {
+  const { colors } = useAppTheme();
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.surfaceMuted, borderColor: colors.border }]}>
       {/* Icon kính lúp bên trái */}
       <Ionicons name="search" size={20} color="#9CA3AF" style={styles.icon} />
 
       {/* Ô nhập liệu tìm kiếm */}
       <TextInput
-        style={styles.input}
+        style={[styles.input, { color: colors.text }]}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}

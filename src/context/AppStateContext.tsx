@@ -10,11 +10,8 @@ import React, {
 
 import { auth } from '../config/firebase';
 import {
-  addBooking as addFirestoreBooking,
   cancelBooking as cancelFirestoreBooking,
-  checkInBooking as checkInFirestoreBooking,
   DEFAULT_BOOKING_SLOT,
-  getBookings,
   getBookingEndTime,
   getDateKey,
   extendBooking as extendFirestoreBooking,
@@ -27,28 +24,27 @@ import {
   seedRoomsIfEmpty,
   updateRoom as updateFirestoreRoom,
 } from '../services/roomService';
+import { reconcileBookingReminders } from '../services/notificationService';
 import { Room } from '../types/room';
+import type {
+  Booking as DomainBooking,
+  BookingStatus as DomainBookingStatus,
+} from '../domain/Entities/Booking';
+import type { BookingRepository } from '../domain/Repositories/BookingRepository';
+import type { CreateBooking } from '../domain/UseCases/CreateBooking';
+import type { ScanIdCardUseCase } from '../domain/UseCases/ScanIdCardUseCase';
 
-export type BookingStatus = 'CONFIRMED' | 'IN_USE' | 'COMPLETED' | 'NO_SHOW';
-
-export interface Booking {
-  id: string;
-  roomId: string;
-  roomName: string;
-  building: string;
-  date: string;
-  slot: string;
-  userId: string;
-  startTime: string;
-  endTime: string;
-  status: BookingStatus;
-  seatNumber?: number;
-}
+export type Booking = DomainBooking;
+export type BookingStatus = DomainBookingStatus;
 
 export interface UserProfile {
   name: string;
   email: string;
   phone: string;
+  idNumber: string;
+  dateOfBirth: string;
+  major: string;
+  subInfo: string;
 }
 
 interface AppStateContextValue {
@@ -60,16 +56,23 @@ interface AppStateContextValue {
   error: string | null;
   availabilityDate: string;
   availabilitySlot: string;
+  scanIdCardUseCase: ScanIdCardUseCase;
   refreshData: (date?: string, slot?: string) => Promise<void>;
   refreshRooms: (date: string, slot: string) => Promise<void>;
   addRoom: (room: Omit<Room, 'id'>) => Promise<Room>;
   updateRoom: (roomId: string, changes: Partial<Omit<Room, 'id'>>) => Promise<void>;
   deleteRoom: (roomId: string) => Promise<void>;
-  createBooking: (room: Room, date: string, slot: string) => Promise<void>;
+  createBooking: (room: Room, date: string, slot: string) => Promise<boolean>;
   cancelBooking: (bookingId: string) => Promise<void>;
-  checkInBooking: (bookingId: string) => Promise<void>;
   extendBooking: (bookingId: string, minutes: number) => Promise<void>;
   updateProfile: (profile: UserProfile) => void;
+}
+
+interface AppStateProviderProps {
+  children: React.ReactNode;
+  bookingRepository: BookingRepository;
+  createBookingUseCase: CreateBooking;
+  scanIdCardUseCase: ScanIdCardUseCase;
 }
 
 const AppStateContext = createContext<AppStateContextValue | undefined>(undefined);
@@ -80,7 +83,12 @@ const getSignedInUserId = (): string => {
   return userId;
 };
 
-export const AppStateProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
+export const AppStateProvider: React.FC<AppStateProviderProps> = ({
+  children,
+  bookingRepository,
+  createBookingUseCase,
+  scanIdCardUseCase,
+}) => {
   const currentUser = auth.currentUser;
   const [rooms, setRooms] = useState<Room[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -88,6 +96,10 @@ export const AppStateProvider: React.FC<React.PropsWithChildren> = ({ children }
     name: currentUser?.displayName ?? 'Study Room User',
     email: currentUser?.email ?? '',
     phone: '',
+    idNumber: '',
+    dateOfBirth: '',
+    major: '',
+    subInfo: '',
   });
   const [loading, setLoading] = useState(true);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
@@ -128,14 +140,12 @@ export const AppStateProvider: React.FC<React.PropsWithChildren> = ({ children }
     setLoading(true);
     setError(null);
     try {
-      await seedRoomsIfEmpty();
       const userId = getSignedInUserId();
-      const [loadedRooms, loadedBookings] = await Promise.all([
-        getRooms(date, slot),
-        getBookings(userId),
-      ]);
-      setRooms(loadedRooms);
+      const loadedBookings = await bookingRepository.findByUserId(userId);
       setBookings(loadedBookings);
+      await seedRoomsIfEmpty();
+      const loadedRooms = await getRooms(date, slot);
+      setRooms(loadedRooms);
       setAvailabilityDate(date);
       setAvailabilitySlot(slot);
     } catch (loadError: unknown) {
@@ -148,7 +158,7 @@ export const AppStateProvider: React.FC<React.PropsWithChildren> = ({ children }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [bookingRepository]);
 
   useEffect(() => {
     void refreshData().catch(() => {
@@ -161,7 +171,18 @@ export const AppStateProvider: React.FC<React.PropsWithChildren> = ({ children }
     if (!userId) return undefined;
     return subscribeToBookings(
       userId,
-      setBookings,
+      () => {
+        void bookingRepository
+          .findByUserId(userId)
+          .then(setBookings)
+          .catch((loadError: unknown) => {
+            setError(
+              loadError instanceof Error
+                ? loadError.message
+                : 'Could not refresh local bookings.',
+            );
+          });
+      },
       (loadError) => {
         setError(
           loadError instanceof Error
@@ -170,7 +191,15 @@ export const AppStateProvider: React.FC<React.PropsWithChildren> = ({ children }
         );
       },
     );
-  }, []);
+  }, [bookingRepository]);
+
+  useEffect(() => {
+    const userId = auth.currentUser?.uid;
+    if (!userId || loading) return;
+    void reconcileBookingReminders(userId, bookings).catch((syncError: unknown) => {
+      console.error('Could not sync local booking reminders:', syncError);
+    });
+  }, [bookings, loading]);
 
   useEffect(() => {
     const now = Date.now();
@@ -179,8 +208,6 @@ export const AppStateProvider: React.FC<React.PropsWithChildren> = ({ children }
       ...bookings
         .filter(
           (booking) =>
-            booking.date === availabilityDate &&
-            booking.slot === availabilitySlot &&
             (booking.status === 'CONFIRMED' || booking.status === 'IN_USE'),
         )
         .map((booking) =>
@@ -220,14 +247,41 @@ export const AppStateProvider: React.FC<React.PropsWithChildren> = ({ children }
   }, []);
 
   const createBooking = useCallback(
-    async (room: Room, date: string, slot: string) => {
-      const booking = await addFirestoreBooking(room, date, slot, getSignedInUserId());
-      setBookings((current) => [...current, booking]);
+    async (room: Room, date: string, slot: string): Promise<boolean> => {
+      const booking = await createBookingUseCase.execute({
+        room,
+        date,
+        slot,
+        userId: getSignedInUserId(),
+      });
+      const nextBookings = [...bookings, booking];
+      let remindersScheduled = false;
+      try {
+        remindersScheduled = await reconcileBookingReminders(
+          booking.userId,
+          nextBookings,
+          true,
+        );
+      } catch (reminderError: unknown) {
+        console.error('Booking was saved, but its reminders could not be scheduled:', reminderError);
+      }
+      setBookings((current) =>
+        current.some((item) => item.id === booking.id)
+          ? current
+          : [...current, booking],
+      );
       if (availabilityDate === date && availabilitySlot === slot) {
         void refreshRooms(date, slot).catch(() => undefined);
       }
+      return remindersScheduled;
     },
-    [availabilityDate, availabilitySlot, refreshRooms],
+    [
+      availabilityDate,
+      availabilitySlot,
+      bookings,
+      createBookingUseCase,
+      refreshRooms,
+    ],
   );
 
   const cancelBooking = useCallback(
@@ -245,15 +299,6 @@ export const AppStateProvider: React.FC<React.PropsWithChildren> = ({ children }
     },
     [availabilityDate, availabilitySlot, bookings, refreshRooms],
   );
-
-  const checkInBooking = useCallback(async (bookingId: string) => {
-    await checkInFirestoreBooking(bookingId, getSignedInUserId());
-    setBookings((current) =>
-      current.map((booking) =>
-        booking.id === bookingId ? { ...booking, status: 'IN_USE' } : booking,
-      ),
-    );
-  }, []);
 
   const extendBooking = useCallback(
     async (bookingId: string, minutes: number) => {
@@ -280,6 +325,7 @@ export const AppStateProvider: React.FC<React.PropsWithChildren> = ({ children }
       error,
       availabilityDate,
       availabilitySlot,
+      scanIdCardUseCase,
       refreshData,
       refreshRooms,
       addRoom,
@@ -287,7 +333,6 @@ export const AppStateProvider: React.FC<React.PropsWithChildren> = ({ children }
       deleteRoom,
       createBooking,
       cancelBooking,
-      checkInBooking,
       extendBooking,
       updateProfile: setProfile,
     }),
@@ -300,6 +345,7 @@ export const AppStateProvider: React.FC<React.PropsWithChildren> = ({ children }
       error,
       availabilityDate,
       availabilitySlot,
+      scanIdCardUseCase,
       refreshData,
       refreshRooms,
       addRoom,
@@ -307,7 +353,6 @@ export const AppStateProvider: React.FC<React.PropsWithChildren> = ({ children }
       deleteRoom,
       createBooking,
       cancelBooking,
-      checkInBooking,
       extendBooking,
     ],
   );

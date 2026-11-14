@@ -4,6 +4,7 @@
 import React from 'react';
 import { TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useAppTheme } from '../presentation/theme/useAppTheme';
 
 interface FilterButtonProps {
   /** Callback khi người dùng bấm nút lọc */
@@ -11,15 +12,16 @@ interface FilterButtonProps {
 }
 
 const FilterButton: React.FC<FilterButtonProps> = ({ onPress }) => {
+  const { colors } = useAppTheme();
   return (
     <TouchableOpacity
-      style={styles.button}
+      style={[styles.button, { backgroundColor: colors.surface, borderColor: colors.border }]}
       activeOpacity={0.7}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel="Filter rooms"
     >
-      <Ionicons name="options-outline" size={19} color="#374151" />
+      <Ionicons name="options-outline" size={19} color={colors.secondaryText} />
     </TouchableOpacity>
   );
 };

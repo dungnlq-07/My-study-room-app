@@ -19,6 +19,7 @@ import {
   subscribeToNotifications,
 } from '../services/notificationService';
 import type { AppNotification } from '../types/notification';
+import { useAppTheme } from '../presentation/theme/useAppTheme';
 
 interface NotificationScreenProps {
   visible: boolean;
@@ -45,6 +46,7 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({
   userId,
   onClose,
 }) => {
+  const { colors } = useAppTheme();
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +71,7 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({
 
   const removeNotification = async (notificationId: string) => {
     try {
-      await deleteNotification(notificationId);
+      await deleteNotification(userId, notificationId);
     } catch (actionError: unknown) {
       Alert.alert(
         'Could not delete notification',
@@ -108,7 +110,7 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({
   const openNotification = async (item: AppNotification) => {
     if (item.isRead) return;
     try {
-      await markAsRead(item.id);
+      await markAsRead(userId, item.id);
     } catch (actionError: unknown) {
       Alert.alert(
         'Could not update notification',
@@ -124,18 +126,18 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({
       onRequestClose={onClose}
       presentationStyle="fullScreen"
     >
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.header}>
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity
             style={styles.backButton}
             onPress={onClose}
             accessibilityLabel="Close notifications"
           >
-            <Ionicons name="arrow-back" size={22} color="#111827" />
+            <Ionicons name="arrow-back" size={22} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.headerCopy}>
-            <Text style={styles.title}>Notifications</Text>
-            <Text style={styles.subtitle}>
+            <Text style={[styles.title, { color: colors.text }]}>Notifications</Text>
+            <Text style={[styles.subtitle, { color: colors.mutedText }]}>
               {notifications.filter((item) => !item.isRead).length} unread
             </Text>
           </View>
@@ -183,8 +185,8 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({
                     color="#64748B"
                   />
                 </View>
-                <Text style={styles.emptyTitle}>You’re all caught up</Text>
-                <Text style={styles.stateText}>
+                <Text style={[styles.emptyTitle, { color: colors.text }]}>You’re all caught up</Text>
+                <Text style={[styles.stateText, { color: colors.mutedText }]}>
                   Booking reminders will appear here.
                 </Text>
               </View>
@@ -195,6 +197,7 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({
                 <TouchableOpacity
                   style={[
                     styles.notificationCard,
+                    { backgroundColor: colors.surface, borderColor: colors.border },
                     !item.isRead && styles.unreadCard,
                   ]}
                   onPress={() => void openNotification(item)}
@@ -214,10 +217,10 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({
                   </View>
                   <View style={styles.notificationContent}>
                     <View style={styles.titleRow}>
-                      <Text style={styles.notificationTitle}>{item.title}</Text>
+                      <Text style={[styles.notificationTitle, { color: colors.text }]}>{item.title}</Text>
                       {!item.isRead && <View style={styles.unreadDot} />}
                     </View>
-                    <Text style={styles.message}>{item.message}</Text>
+                    <Text style={[styles.message, { color: colors.secondaryText }]}>{item.message}</Text>
                     <Text style={styles.timestamp}>
                       {formatNotificationDate(item.createdAt)}
                     </Text>

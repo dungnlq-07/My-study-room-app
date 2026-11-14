@@ -1,7 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   Image,
   Modal,
   Pressable,
@@ -12,6 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { FlashList } from '@shopify/flash-list';
 
 import SearchBar from '../components/SearchBar';
 import FilterButton from '../components/FilterButton';
@@ -26,6 +26,7 @@ import {
   getBookingTimeRange,
 } from '../services/bookingService';
 import { showBookingFailure, showBookingSuccess } from '../utils/bookingAlert';
+import { useAppTheme } from '../presentation/theme/useAppTheme';
 
 const NUM_COLUMNS = 2;
 type AvailabilityFilter = 'all' | 'available' | 'unavailable';
@@ -58,6 +59,7 @@ const BrowseRoomsScreen: React.FC = () => {
     refreshData,
     refreshRooms,
   } = useAppState();
+  const { colors } = useAppTheme();
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -134,23 +136,35 @@ const BrowseRoomsScreen: React.FC = () => {
     }).length;
   }, [draftAvailability, draftCapacity, rooms, searchQuery]);
 
-  const openRoom = (room: Room) => {
-    const initialSlot = (room.timeSlots ?? DEFAULT_ROOM_TIME_SLOTS)[0] ?? '';
-    setSelectedRoom(room);
-    setSelectedDate(dateOptions[0].key);
-    setSelectedSlot(initialSlot);
-    if (initialSlot) {
-      void refreshRooms(dateOptions[0].key, initialSlot).catch(() => undefined);
-    }
-  };
+  const openRoom = useCallback(
+    (room: Room) => {
+      const initialSlot = (room.timeSlots ?? DEFAULT_ROOM_TIME_SLOTS)[0] ?? '';
+      setSelectedRoom(room);
+      setSelectedDate(dateOptions[0].key);
+      setSelectedSlot(initialSlot);
+      if (initialSlot) {
+        void refreshRooms(dateOptions[0].key, initialSlot).catch(() => undefined);
+      }
+    },
+    [dateOptions, refreshRooms],
+  );
 
   const handleBooking = async () => {
     if (!selectedRoom) return;
     setBookingSubmitting(true);
     try {
-      await createBooking(selectedRoom, selectedDate, selectedSlot);
+      const remindersScheduled = await createBooking(
+        selectedRoom,
+        selectedDate,
+        selectedSlot,
+      );
       setSelectedRoom(null);
-      showBookingSuccess(selectedRoom.name, selectedDate, selectedSlot);
+      showBookingSuccess(
+        selectedRoom.name,
+        selectedDate,
+        selectedSlot,
+        remindersScheduled,
+      );
     } catch (bookingError: unknown) {
       void refreshRooms(selectedDate, selectedSlot).catch(() => undefined);
       const message =
@@ -177,7 +191,7 @@ const BrowseRoomsScreen: React.FC = () => {
         booking.roomId === room.id &&
         booking.date === date &&
         booking.slot === slot &&
-        (booking.status === 'CONFIRMED' || booking.status === 'IN_USE'),
+        booking.status === 'CONFIRMED' || booking.status === 'IN_USE',
     );
 
   const isPastSlot = (date: string, slot: string) => {
@@ -200,17 +214,21 @@ const BrowseRoomsScreen: React.FC = () => {
 
   const firstName = profile.name.trim().split(/\s+/)[0] || 'there';
   const currentUserId = auth.currentUser?.uid;
+  const renderRoom = useCallback(
+    ({ item }: { item: Room }) => <RoomCard room={item} onPress={openRoom} />,
+    [openRoom],
+  );
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <View style={styles.header}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <View style={styles.greetingRow}>
           <View style={styles.avatar}>
             <Ionicons name="person" size={20} color="#2563EB" />
           </View>
           <View style={styles.greetingCopy}>
-            <Text style={styles.greeting}>Hi, {firstName}</Text>
-            <Text style={styles.greetingSubtitle}>Let’s find your study space</Text>
+            <Text style={[styles.greeting, { color: colors.text }]}>Hi, {firstName}</Text>
+            <Text style={[styles.greetingSubtitle, { color: colors.mutedText }]}>Let’s find your study space</Text>
           </View>
           {currentUserId && (
             <NotificationBadge
@@ -272,23 +290,22 @@ const BrowseRoomsScreen: React.FC = () => {
         </View>
       )}
 
-      <FlatList
+      <FlashList
         data={filteredRooms}
+        estimatedItemSize={160}
         keyExtractor={(item) => item.id}
         numColumns={NUM_COLUMNS}
-        columnWrapperStyle={styles.columnWrapper}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={{
+          paddingHorizontal: 9,
+          paddingTop: 12,
+          paddingBottom: 20,
+        }}
         showsVerticalScrollIndicator={false}
-        renderItem={({ item }) => (
-          <RoomCard
-            room={item}
-            onPress={openRoom}
-          />
-        )}
+        renderItem={renderRoom}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Ionicons name="search-outline" size={38} color="#9CA3AF" />
-            <Text style={styles.emptyTitle}>
+            <Text style={[styles.emptyTitle, { color: colors.text }]}>
               {loading
                 ? 'Loading rooms'
                 : error
@@ -296,7 +313,7 @@ const BrowseRoomsScreen: React.FC = () => {
                   : 'No rooms found'}
             </Text>
             {!loading && !error && (
-              <Text style={styles.emptyText}>Try changing your search or filters.</Text>
+              <Text style={[styles.emptyText, { color: colors.mutedText }]}>Try changing your search or filters.</Text>
             )}
           </View>
         }
@@ -318,10 +335,10 @@ const BrowseRoomsScreen: React.FC = () => {
       >
         <View style={styles.modalBackdrop}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowFilters(false)} />
-          <View style={styles.sheet}>
+          <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
             <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>Filter rooms</Text>
-            <Text style={styles.sectionLabel}>Availability</Text>
+            <Text style={[styles.sheetTitle, { color: colors.text }]}>Filter rooms</Text>
+            <Text style={[styles.sectionLabel, { color: colors.secondaryText }]}>Availability</Text>
             <View style={styles.optionsRow}>
               {([
                 ['all', 'All rooms'],
@@ -336,7 +353,7 @@ const BrowseRoomsScreen: React.FC = () => {
                 />
               ))}
             </View>
-            <Text style={styles.sectionLabel}>Minimum capacity</Text>
+            <Text style={[styles.sectionLabel, { color: colors.secondaryText }]}>Minimum capacity</Text>
             <View style={styles.optionsRow}>
               {[0, 10, 25, 50].map((value) => (
                 <ChoiceChip
@@ -381,7 +398,7 @@ const BrowseRoomsScreen: React.FC = () => {
         <View style={styles.modalBackdrop}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setSelectedRoom(null)} />
           {selectedRoom && (
-            <View style={styles.sheet}>
+            <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
               <View style={styles.sheetHandle} />
               <TouchableOpacity
                 style={styles.closeButton}
@@ -395,8 +412,8 @@ const BrowseRoomsScreen: React.FC = () => {
                 style={styles.detailImage}
                 resizeMode="cover"
               />
-              <Text style={styles.sheetTitle}>{selectedRoom.name}</Text>
-              <Text style={styles.detailText}>
+              <Text style={[styles.sheetTitle, { color: colors.text }]}>{selectedRoom.name}</Text>
+              <Text style={[styles.detailText, { color: colors.mutedText }]}>
                 {selectedRoom.building} · {selectedRoom.capacity} seats
               </Text>
               <Text style={styles.sectionLabel}>Choose a day</Text>
@@ -513,15 +530,18 @@ interface ChoiceChipProps {
   onPress: () => void;
 }
 
-const ChoiceChip: React.FC<ChoiceChipProps> = ({
+const ChoiceChip: React.FC<ChoiceChipProps> = React.memo(({
   label,
   selected,
   disabled = false,
   onPress,
-}) => (
+}) => {
+  const { colors } = useAppTheme();
+  return (
   <TouchableOpacity
     style={[
       styles.chip,
+      { backgroundColor: colors.surface, borderColor: colors.border },
       selected && styles.chipSelected,
       disabled && styles.chipDisabled,
     ]}
@@ -531,6 +551,7 @@ const ChoiceChip: React.FC<ChoiceChipProps> = ({
     <Text
       style={[
         styles.chipText,
+        { color: colors.secondaryText },
         selected && styles.chipTextSelected,
         disabled && styles.chipTextDisabled,
       ]}
@@ -538,7 +559,8 @@ const ChoiceChip: React.FC<ChoiceChipProps> = ({
       {label}
     </Text>
   </TouchableOpacity>
-);
+  );
+});
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F8FAFC' },

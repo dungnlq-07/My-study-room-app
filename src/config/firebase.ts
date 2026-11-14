@@ -43,7 +43,11 @@
 // export const auth = createAuth();
 
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+} from "firebase/firestore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import {
@@ -67,7 +71,12 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 // Xuất các dịch vụ ra để dùng trong toàn bộ dự án
-export const db = getFirestore(app);
+export const db =
+  Platform.OS === 'web'
+    ? initializeFirestore(app, {
+        localCache: persistentLocalCache(),
+      })
+    : getFirestore(app);
 
 const createAuth = () => {
   try {

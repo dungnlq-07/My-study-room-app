@@ -5,11 +5,16 @@ export const showBookingSuccess = (
   roomName: string,
   date: string,
   slot: string,
+  remindersScheduled = true,
 ): void => {
   Toast.show({
     type: 'success',
     text1: 'Thành công 🎉',
-    text2: `Đặt phòng: ${roomName}\nNgày: ${date} | Khung giờ: ${slot}`,
+    text2: `Đặt phòng: ${roomName}\nNgày: ${date} | Khung giờ: ${slot}${
+      remindersScheduled
+        ? ''
+        : '\nBật quyền thông báo để nhận nhắc lịch trên thiết bị.'
+    }`,
     position: 'top',
     visibilityTime: 3000, // Tự biến mất sau 3 giây
   });

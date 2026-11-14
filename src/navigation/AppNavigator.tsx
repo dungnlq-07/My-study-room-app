@@ -1,21 +1,22 @@
 // src/navigation/AppNavigator.tsx
-// Bottom Tab Navigator with room browsing, booking, QR scanning, and profile tabs.
+// Bottom Tab Navigator: Browse Rooms, My Bookings, Scan QR, Profile.
 
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAppTheme } from '../presentation/theme/useAppTheme';
 
 import BrowseRoomsScreen from '../screens/BrowseRoomsScreen';
 import MyBookingsScreen from '../screens/MyBookingsScreen';
+import ScanQRCodeScreen from '../screens/ScanQRCodeScreen';
 import ProfileScreen from '../screens/ProfileScreen';
-import QRScannerScreen from '../screens/QRScannerScreen';
 
 // Định nghĩa danh sách route và tham số của từng route (Type-safe)
 export type RootTabParamList = {
   BrowseRooms: undefined;
   MyBookings: undefined;
-  QRScanner: undefined;
+  ScanQR: undefined;
   Profile: undefined;
 };
 
@@ -23,6 +24,7 @@ const Tab = createBottomTabNavigator<RootTabParamList>();
 
 const AppNavigator: React.FC = () => {
   const insets = useSafeAreaInsets();
+  const { colors } = useAppTheme();
 
   return (
     <Tab.Navigator
@@ -38,7 +40,7 @@ const AppNavigator: React.FC = () => {
             case 'MyBookings':
               iconName = focused ? 'calendar' : 'calendar-outline';
               break;
-            case 'QRScanner':
+            case 'ScanQR':
               iconName = focused ? 'camera' : 'camera-outline';
               break;
             case 'Profile':
@@ -57,8 +59,8 @@ const AppNavigator: React.FC = () => {
           height: 58 + insets.bottom,
           paddingTop: 5,
           paddingBottom: Math.max(insets.bottom, 5),
-          backgroundColor: '#FFFFFF',
-          borderTopColor: '#EEF0F3',
+          backgroundColor: colors.tabBar,
+          borderTopColor: colors.border,
           borderTopWidth: 1,
           elevation: 8,
         },
@@ -76,9 +78,9 @@ const AppNavigator: React.FC = () => {
         options={{ tabBarLabel: 'My Bookings' }}
       />
       <Tab.Screen
-        name="QRScanner"
-        component={QRScannerScreen}
-        options={{ tabBarLabel: 'Quét QR' }}
+        name="ScanQR"
+        component={ScanQRCodeScreen}
+        options={{ tabBarLabel: 'Scan QR' }}
       />
       <Tab.Screen
         name="Profile"

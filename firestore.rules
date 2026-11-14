@@ -1,0 +1,169 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && request.auth.token.admin == true;
+    }
+
+    function isScanner() {
+      return signedIn() && request.auth.token.scanner == true;
+    }
+
+    function isBookingOwner() {
+      return signedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    function roomRevisionIncremented(roomId) {
+      let roomPath = /databases/$(database)/documents/rooms/$(roomId);
+      return exists(roomPath)
+        && getAfter(roomPath).data.get('bookingRevision', 0)
+          == get(roomPath).data.get('bookingRevision', 0) + 1;
+    }
+
+    function validRoom() {
+      return request.resource.data.name is string
+        && request.resource.data.building is string
+        && request.resource.data.capacity is number
+        && request.resource.data.capacity >= 1
+        && request.resource.data.status in ['available', 'occupied', 'booked'];
+    }
+
+    function validNewBooking() {
+      return request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'CONFIRMED'
+        && request.resource.data.roomId is string
+        && request.resource.data.roomName is string
+        && request.resource.data.building is string
+        && request.resource.data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && request.resource.data.slot is string
+        && request.resource.data.startTime is string
+        && request.resource.data.endTime is string
+        && request.resource.data.startAt is timestamp
+        && request.resource.data.endAt is timestamp
+        && request.resource.data.endAt > request.resource.data.startAt
+        && request.resource.data.checkInStartsAt is timestamp
+        && request.resource.data.checkInEndsAt is timestamp
+        && request.resource.data.checkInStartsAt
+          == request.resource.data.startAt - duration.value(15, 'm')
+        && ((request.resource.data.endAt
+              <= request.resource.data.startAt + duration.value(15, 'm')
+            && request.resource.data.checkInEndsAt
+              == request.resource.data.endAt)
+          || (request.resource.data.endAt
+                > request.resource.data.startAt + duration.value(15, 'm')
+              && request.resource.data.checkInEndsAt
+                == request.resource.data.startAt + duration.value(15, 'm')))
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.keys().hasOnly([
+          'userId',
+          'roomId',
+          'roomName',
+          'building',
+          'date',
+          'slot',
+          'startTime',
+          'endTime',
+          'startAt',
+          'endAt',
+          'status',
+          'createdAt',
+          'checkInStartsAt',
+          'checkInEndsAt'
+        ]);
+    }
+
+    function validCheckIn() {
+      return (resource.data.status == 'CONFIRMED'
+          || resource.data.status == 'active')
+        && resource.data.get('checkInStartsAt', null) is timestamp
+        && resource.data.get('checkInEndsAt', null) is timestamp
+        && request.time >= resource.data.checkInStartsAt
+        && request.time <= resource.data.checkInEndsAt
+        && request.time <= resource.data.endAt
+        && request.resource.data.status == 'IN_USE'
+        && request.resource.data.checkedInAt == request.time
+        && request.resource.data.qrInvalidatedAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && roomRevisionIncremented(resource.data.roomId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'checkedInAt',
+          'qrInvalidatedAt',
+          'updatedAt'
+        ]);
+    }
+
+    function validTimestampBackfill() {
+      return (isBookingOwner() || isScanner() || isAdmin())
+        && !resource.data.keys().hasAny([
+          'startAt',
+          'endAt',
+          'checkInStartsAt',
+          'checkInEndsAt'
+        ])
+        && request.resource.data.startAt is timestamp
+        && request.resource.data.endAt is timestamp
+        && request.resource.data.checkInStartsAt is timestamp
+        && request.resource.data.checkInEndsAt is timestamp
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'startAt',
+          'endAt',
+          'checkInStartsAt',
+          'checkInEndsAt'
+        ]);
+    }
+
+    function validExtension() {
+      return resource.data.status == 'IN_USE'
+        && request.resource.data.status == 'IN_USE'
+        && request.resource.data.endTime is string
+        && request.resource.data.endAt is timestamp
+        && request.resource.data.endTime > resource.data.endTime
+        && request.resource.data.endAt > resource.data.endAt
+        && request.resource.data.updatedAt == request.time
+        && roomRevisionIncremented(resource.data.roomId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'endTime',
+          'endAt',
+          'updatedAt'
+        ]);
+    }
+
+    match /rooms/{roomId} {
+      allow read: if signedIn();
+      allow create: if isAdmin()
+        || (signedIn() && roomId in ['1', '2', '3', '4', '5', '6', '7', '8']
+          && validRoom());
+      allow update: if isAdmin()
+        || (signedIn()
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['bookingRevision'])
+          && request.resource.data.bookingRevision
+            == resource.data.get('bookingRevision', 0) + 1);
+      allow delete: if isAdmin();
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && validNewBooking()
+        && roomRevisionIncremented(request.resource.data.roomId);
+      allow update: if validTimestampBackfill()
+        || ((isBookingOwner() || isScanner() || isAdmin()) && validCheckIn())
+        || (isBookingOwner() && validExtension());
+      allow delete: if isBookingOwner()
+        && (resource.data.status == 'CONFIRMED'
+          || resource.data.status == 'active')
+        && roomRevisionIncremented(resource.data.roomId);
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

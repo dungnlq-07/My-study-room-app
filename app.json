@@ -4,21 +4,13 @@
     "slug": "study-room-booking",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "splash": {
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "assetBundlePatterns": ["**/*"],
-    "plugins": [
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "Cho phép ứng dụng sử dụng camera để quét mã QR check-in.",
-          "microphonePermission": false,
-          "recordAudioAndroid": false
-        }
-      ]
+    "assetBundlePatterns": [
+      "**/*"
     ],
     "ios": {
       "supportsTablet": true
@@ -26,8 +18,30 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#ffffff"
-      }
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.anonymous.studyroombooking"
     },
+    "plugins": [
+      "expo-notifications",
+      "expo-sqlite",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Study Room Booking to select an ID card image.",
+          "cameraPermission": "Allow Study Room Booking to take a photo of your ID card."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Study Room Booking to use your camera to scan booking QR codes."
+        }
+      ]
+    ],
     "web": {
       "bundler": "metro"
     }

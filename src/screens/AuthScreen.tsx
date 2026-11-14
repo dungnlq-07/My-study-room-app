@@ -20,6 +20,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { auth } from '../config/firebase';
+import { useAppTheme } from '../presentation/theme/useAppTheme';
 
 type AuthMode = 'signIn' | 'signUp';
 
@@ -51,6 +52,7 @@ const getAuthErrorMessage = (error: unknown): string => {
 };
 
 const AuthScreen: React.FC = () => {
+  const { colors } = useAppTheme();
   const [mode, setMode] = useState<AuthMode>('signIn');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -112,7 +114,7 @@ const AuthScreen: React.FC = () => {
   const isSignUp = mode === 'signUp';
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <KeyboardAvoidingView
         style={styles.keyboardView}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -121,17 +123,17 @@ const AuthScreen: React.FC = () => {
           <View style={styles.logo}>
             <Ionicons name="library-outline" size={34} color="#2563EB" />
           </View>
-          <Text style={styles.title}>Study Room</Text>
-          <Text style={styles.subtitle}>
+          <Text style={[styles.title, { color: colors.text }]}>Study Room</Text>
+          <Text style={[styles.subtitle, { color: colors.mutedText }]}>
             {isSignUp ? 'Create your account to get started.' : 'Sign in to continue to your rooms.'}
           </Text>
 
-          <View style={styles.form}>
+          <View style={[styles.form, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             {isSignUp && (
               <>
-                <Text style={styles.label}>Name</Text>
+                <Text style={[styles.label, { color: colors.secondaryText }]}>Name</Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.input }]}
                   value={name}
                   onChangeText={setName}
                   placeholder="Your name"
@@ -141,9 +143,9 @@ const AuthScreen: React.FC = () => {
                 />
               </>
             )}
-            <Text style={styles.label}>Email</Text>
+            <Text style={[styles.label, { color: colors.secondaryText }]}>Email</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.input }]}
               value={email}
               onChangeText={setEmail}
               placeholder="name@example.com"
@@ -153,9 +155,9 @@ const AuthScreen: React.FC = () => {
               editable={!loading}
               returnKeyType="next"
             />
-            <Text style={styles.label}>Password</Text>
+            <Text style={[styles.label, { color: colors.secondaryText }]}>Password</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.input }]}
               value={password}
               onChangeText={setPassword}
               placeholder="At least 6 characters"
@@ -192,7 +194,7 @@ const AuthScreen: React.FC = () => {
           </View>
 
           <View style={styles.switchRow}>
-            <Text style={styles.switchText}>
+            <Text style={[styles.switchText, { color: colors.mutedText }]}>
               {isSignUp ? 'Already have an account?' : "Don't have an account?"}
             </Text>
             <TouchableOpacity
